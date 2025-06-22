@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Caveman Rock Defense</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #222;
+            font-family: 'Press Start 2P', cursive;
+            color: #fff;
+            overflow: hidden;
+        }
+        .screen {
+            display: none; 
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85); 
+            z-index: 20;
+        }
+        .screen h1 { font-size: 2.5em; color: #FFD700; margin-bottom: 20px; }
+        .screen h2 { font-size: 1.5em; color: #eee; margin-bottom: 15px; }
+        .screen button {
+            font-family: 'Press Start 2P', cursive; font-size: 1.2em; padding: 15px 30px;
+            background-color: #4CAF50; color: white; border: 3px solid #fff;
+            border-radius: 8px; cursor: pointer; box-shadow: 0 5px #2E7D32;
+            transition: all 0.1s ease; margin-top: 20px;
+        }
+        .screen button:active { transform: translateY(3px); box-shadow: 0 2px #2E7D32; }
+        #highScoresList { list-style: none; padding: 0; font-size: 1em; color: #ccc; }
+        #highScoresList li { margin-bottom: 8px; }
+
+        #gameContainer { position: relative; }
+        canvas {
+            border: 3px solid #fff; background-color: #334; display: block;
+            max-width: 100%; max-height: 80vh; border-radius: 8px;
+        }
+        #gameUI {
+            display: flex; justify-content: space-between; width: 100%;
+            max-width: 600px; padding: 10px 0; font-size: 1.2em;
+        }
+        #scoreBoard { color: #FFD700; }
+        #gameOverScreen {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background-color: rgba(0,0,0,0.75); padding: 30px; border-radius: 10px;
+            text-align: center; display: none; z-index: 10;
+        }
+        #gameOverScreen h2 { color: #FF0000; margin-bottom: 20px; }
+        #retryButton {
+            font-family: 'Press Start 2P', cursive; font-size: 1em; padding: 10px 20px;
+            background-color: #4CAF50; color: white; border: 2px solid #fff;
+            border-radius: 5px; cursor: pointer; box-shadow: 0 4px #2E7D32;
+            transition: all 0.1s ease;
+        }
+        #retryButton:active { transform: translateY(2px); box-shadow: 0 2px #2E7D32; }
+        #controlsInfo { margin-top: 15px; font-size: 0.8em; color: #bbb; }
+    </style>
+</head>
+<body>
+    <div id="startScreen" class="screen">
+        <h1>Caveman Rock Defense</h1>
+        <h2>High Scores</h2>
+        <ul id="highScoresList"></ul>
+        <button id="startGameButton">Start Game</button>
+    </div>
+
+    <div id="gameContainer" style="display: none;">
+        <div id="gameUI"><div id="scoreBoard">Score: 0</div></div>
+        <canvas id="gameCanvas"></canvas>
+        <div id="gameOverScreen"><h2>GAME OVER</h2><button id="retryButton">Retry</button></div>
+    </div>
+    <div id="controlsInfo" style="display: none;">Controls: Left/Right Arrows to Move, Space to Swing Club</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreBoard = document.getElementById('scoreBoard');
+        const startScreen = document.getElementById('startScreen');
+        const startGameButton = document.getElementById('startGameButton');
+        const highScoresList = document.getElementById('highScoresList');
+        const gameContainer = document.getElementById('gameContainer');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const retryButton = document.getElementById('retryButton');
+        const controlsInfo = document.getElementById('controlsInfo');
+
+        let canvasWidth = 600;
+        let canvasHeight = 400;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        let score = 0;
+        let gameState = 'startScreen';
+        let keys = {}; 
+        let rockIdCounter = 0; 
+        let animationFrameId;
+        let gameTimeInFrames = 0; 
+        let debugFrameCount = 0; 
+
+        const floorVisualHeight = 10; 
+        const wallVisualWidth = 10;  
+        const wallFloorColor = '#654321'; 
+
+        const ceilingHeight = 10; 
+        const skylightWidthFraction = 1/3; 
+        const skylightStartX = canvasWidth * (1 - skylightWidthFraction) / 2;
+        const skylightEndX = canvasWidth - (canvasWidth * (1 - skylightWidthFraction) / 2);
+        const skylightLightColor = 'rgba(255, 255, 224, 0.1)'; 
+
+        const player = {
+            width:40, height:50, speed:5, 
+            x: canvasWidth/2-20, y: canvasHeight - floorVisualHeight - 50, 
+            emoji:'🧍', deathEmoji:'😵', isHit:false, isSwinging:false, swingTimer:0, swingDuration:15, 
+            clubPivotX:0, clubPivotY:0, clubRadius:45, swingFromAngle:0, swingToAngle:0, 
+            currentSwingAnimatedAngle:0, swingAnimationSpeed:0, nextSwingDirection:1, 
+            clubThickness: 8, 
+        };
+        const fire = {
+            width:60, height:60, x: canvasWidth/2 - 30, y: canvasHeight - floorVisualHeight - 60, 
+            emoji:'🔥', deathEmoji:'💨', isHit:false,
+        };
+        const baby = {
+            width:25, height:25, speed: 0.2, x: fire.x - 30, y: canvasHeight - floorVisualHeight - 25, 
+            emoji:'👶', deathEmoji:'😭', isHit:false,
+        };
+        const dog = {
+            width:25, height:25, speed: 1.5, x: fire.x + fire.width + 5, y: canvasHeight - floorVisualHeight - 25, 
+            emoji:'🐕', deathEmoji:'💫', isHit:false,
+            state: 'idle', targetX: fire.x + fire.width + 5, actionTimer: 120, 
+            barkDurationTimer: 0, barkText: "Woof!",
+        };
+        
+        let rocks = [];
+        const rockRadius = 10;
+        const rockEmoji = '🪨';
+        const crumblingRockEmoji = '💥'; 
+        const initialRockFallSpeedY = 1.0; 
+        const maxRockSpawnAngleDx = 1; 
+        let baseRockSpawnInterval = 120; 
+        const minRockSpawnInterval = 45; 
+        const rockSpawnIntervalDecreaseRate = 0.1; 
+        let rockSpawnTimer = baseRockSpawnInterval;
+        const rockBounceFactor = 0.7; 
+        const rockCollisionRadiusBuffer = 0; 
+        const rockCrumbleDuration = 20; 
+        const clubTouchedHaloColor = 'rgba(255, 255, 0, 0.4)'; 
+
+        let particles = [];
+        const sparkleColors = ['#FFD700', '#FFA500', '#FFFF00', '#FF4500', '#FF6347']; 
+
+        const rainbow = {
+            isActive: false, opacity: 0, fadeTimer: 0, duration: 180, 
+            fadeSpeed: 1 / 60, colors: ['#FF0000', '#FFA500', '#FFFF00', '#008000', '#0000FF', '#4B0082', '#EE82EE'], 
+            bandHeight: 5, yPosition: ceilingHeight + 5, 
+        };
+
+        function getHighScores() { const scores = localStorage.getItem('cavemanHighScores'); return scores ? JSON.parse(scores) : []; }
+        function saveHighScore(newScore) { let highScores = getHighScores(); highScores.push(newScore); highScores.sort((a, b) => b - a); highScores = highScores.slice(0, 5); localStorage.setItem('cavemanHighScores', JSON.stringify(highScores));}
+        function displayHighScores() { const highScores = getHighScores(); highScoresList.innerHTML = ''; if (highScores.length === 0) { highScoresList.innerHTML = '<li>No scores yet!</li>'; } else { highScores.forEach((s, index) => { const li = document.createElement('li'); li.textContent = `${index + 1}. ${s}`; highScoresList.appendChild(li); }); } }
+
+        startGameButton.addEventListener('click', () => { startScreen.style.display = 'none'; gameContainer.style.display = 'block'; controlsInfo.style.display = 'block'; gameState = 'playing'; resetGame(); gameLoop(); });
+        window.addEventListener('keydown', (e) => { keys[e.code] = true; if (gameState === 'playing' && e.code === 'Space' && !player.isSwinging) { player.isSwinging = true; player.swingTimer = player.swingDuration; if (player.nextSwingDirection === 1) { player.swingFromAngle=0; player.swingToAngle=-Math.PI; } else { player.swingFromAngle=-Math.PI; player.swingToAngle=0; } player.currentSwingAnimatedAngle = player.swingFromAngle; player.swingAnimationSpeed = (player.swingToAngle-player.swingFromAngle)/player.swingDuration; player.nextSwingDirection *= -1; } });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+        retryButton.addEventListener('click', () => { gameOverScreen.style.display = 'none'; gameContainer.style.display = 'none'; controlsInfo.style.display = 'none'; startScreen.style.display = 'flex'; gameState = 'startScreen'; displayHighScores(); });
+
+        function distance(x1,y1,x2,y2){return Math.sqrt(Math.pow(x2-x1,2)+Math.pow(y2-y1,2));}
+        // isAngleInClubArc is removed as it's no longer used
+
+        function spawnSparkles(x, y) { const numSparkles = 5 + Math.floor(Math.random() * 5); for (let i = 0; i < numSparkles; i++) { particles.push({ x: x, y: y, radius: Math.random() * 2 + 1, color: sparkleColors[Math.floor(Math.random() * sparkleColors.length)], life: 20 + Math.random() * 20, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3 }); } }
+        function updateParticles() { for (let i = particles.length - 1; i >= 0; i--) { let p = particles[i]; p.x += p.vx; p.y += p.vy; p.life--; if (p.life <= 0) { particles.splice(i, 1); } } }
+        function drawParticles() { particles.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fillStyle = p.color; ctx.globalAlpha = p.life / 30; ctx.fill(); ctx.globalAlpha = 1.0; }); }
+        function triggerRainbowEffect() { rainbow.isActive = true; rainbow.opacity = 0; rainbow.fadeTimer = rainbow.duration; }
+        function updateRainbow() { if (rainbow.isActive) { rainbow.fadeTimer--; if (rainbow.fadeTimer > rainbow.duration * (2/3)) { rainbow.opacity += rainbow.fadeSpeed * 3; if (rainbow.opacity > 1) rainbow.opacity = 1; } else if (rainbow.fadeTimer < rainbow.duration * (1/3)) { rainbow.opacity -= rainbow.fadeSpeed * 3; if (rainbow.opacity < 0) rainbow.opacity = 0; } else { rainbow.opacity = 1; } if (rainbow.fadeTimer <= 0) { rainbow.isActive = false; rainbow.opacity = 0; } } }
+        function drawRainbow() { if (rainbow.isActive && rainbow.opacity > 0) { const rW = skylightEndX - skylightStartX; let cY = rainbow.yPosition; ctx.globalAlpha = rainbow.opacity; rainbow.colors.forEach(color => { ctx.fillStyle = color; ctx.fillRect(skylightStartX, cY, rW, rainbow.bandHeight); cY += rainbow.bandHeight; }); ctx.globalAlpha = 1.0; } }
+
+        function spawnRock() {
+            const sXMin = skylightStartX + rockRadius; const sXMax = skylightEndX - rockRadius;
+            const x = Math.random()*(sXMax-sXMin)+sXMin; const y = ceilingHeight+rockRadius+1; 
+            const dx = (Math.random()-0.5)*2*maxRockSpawnAngleDx; const dy = initialRockFallSpeedY; 
+            rockIdCounter++; rocks.push({ id:`R${rockIdCounter}`,x:x,y:y,radius:rockRadius,dx:dx,dy:dy,emoji:rockEmoji,state:'falling',touchedByClub:false,crumbleTimer:0,color:`rgb(${100+Math.random()*50},${100+Math.random()*50},${100+Math.random()*50})`});
+        }
+        function updatePlayer() { if(keys['ArrowLeft']&&player.x>wallVisualWidth)player.x-=player.speed; if(keys['ArrowRight']&&player.x<canvasWidth-player.width-wallVisualWidth)player.x+=player.speed; player.clubPivotX=player.x+player.width/2;player.clubPivotY=player.y+player.height*0.3; if(player.isSwinging){player.swingTimer--;player.currentSwingAnimatedAngle+=player.swingAnimationSpeed; if(player.swingAnimationSpeed>0){if(player.currentSwingAnimatedAngle>player.swingToAngle)player.currentSwingAnimatedAngle=player.swingToAngle;}else if(player.swingAnimationSpeed<0){if(player.currentSwingAnimatedAngle<player.swingToAngle)player.currentSwingAnimatedAngle=player.swingToAngle;} if(player.swingTimer<=0)player.isSwinging=false;}else{if(player.nextSwingDirection===1)player.currentSwingAnimatedAngle=0;else player.currentSwingAnimatedAngle=-Math.PI;}}
+        function updateDog() { if(dog.isHit)return;dog.actionTimer--; if(dog.state==='barking'){dog.barkDurationTimer--; if(dog.barkDurationTimer<=0){dog.state='idle';dog.actionTimer=60+Math.random()*120;}}else if(dog.actionTimer<=0){const rA=Math.random(); if(rA<0.7){dog.state='moving'; if(Math.random()<0.5){dog.targetX=wallVisualWidth+dog.width/2+5;}else{dog.targetX=canvasWidth-wallVisualWidth-dog.width/2-5;} dog.actionTimer=180+Math.random()*120;}else{dog.state='idle';dog.actionTimer=60+Math.random()*60; if(Math.abs(dog.x-(wallVisualWidth+dog.width/2+5))<dog.speed||Math.abs(dog.x-(canvasWidth-wallVisualWidth-dog.width/2-5))<dog.speed){dog.state='barking';dog.barkDurationTimer=30+Math.random()*30;}}} if(dog.state==='moving'){if(Math.abs(dog.x-dog.targetX)<dog.speed){dog.x=dog.targetX;dog.state='barking';dog.barkDurationTimer=30+Math.random()*30;dog.actionTimer=dog.barkDurationTimer+30;}else{if(dog.x<dog.targetX){dog.x+=dog.speed;}else{dog.x-=dog.speed;}}} dog.x=Math.max(wallVisualWidth+dog.width/2,Math.min(dog.x,canvasWidth-wallVisualWidth-dog.width/2));}
+        function updateBaby() { if(baby.isHit||dog.isHit)return; if(Math.abs(baby.x-dog.x)>baby.width/2){if(baby.x<dog.x){baby.x+=baby.speed;}else{baby.x-=baby.speed;}} baby.x=Math.max(wallVisualWidth+baby.width/2,Math.min(baby.x,canvasWidth-wallVisualWidth-baby.width/2));}
+        function updateRockSpawnInterval() { if(gameTimeInFrames>0&&gameTimeInFrames%60===0){baseRockSpawnInterval-=rockSpawnIntervalDecreaseRate*20; if(baseRockSpawnInterval<minRockSpawnInterval){baseRockSpawnInterval=minRockSpawnInterval;}}}
+
+        function updateRocks() {
+            for (let i = rocks.length - 1; i >= 0; i--) {
+                let rock = rocks[i]; 
+                if (rock.state === 'crumbling') { rock.crumbleTimer--; if (rock.crumbleTimer <= 0) rocks.splice(i, 1); continue; }
+                rock.x += rock.dx; rock.y += rock.dy;
+                if (rock.y - rock.radius < ceilingHeight && rock.dy < 0) { if (rock.x < skylightStartX || rock.x > skylightEndX) { rock.y = ceilingHeight + rock.radius; rock.dy *= -rockBounceFactor; if(rock.state !== 'clubbed') rock.state = 'bounced'; }}
+                if (rock.x-rock.radius < wallVisualWidth && rock.dx < 0) { rock.x=wallVisualWidth+rock.radius; rock.dx*=-rockBounceFactor; if(rock.state!=='clubbed')rock.state='bounced'; }
+                if (rock.x+rock.radius > canvasWidth-wallVisualWidth && rock.dx > 0) { rock.x=canvasWidth-wallVisualWidth-rock.radius; rock.dx*=-rockBounceFactor; if(rock.state!=='clubbed')rock.state='bounced'; }
+                if (rock.y+rock.radius > canvasHeight-floorVisualHeight && rock.dy > 0) { rock.y=canvasHeight-floorVisualHeight-rock.radius; rock.dy*=-rockBounceFactor; if(rock.dx===0)rock.dx=(Math.random()-0.5)*2; if(rock.state!=='clubbed')rock.state='bounced'; }
+                if (rock.y + rock.radius < 0 && rock.dy < 0 && rock.x > skylightStartX && rock.x < skylightEndX) { score += 100; updateScoreDisplay(); spawnSparkles(rock.x, rock.y + rock.radius); triggerRainbowEffect(); rocks.splice(i, 1); continue; }
+                if (rock.state === 'falling') { 
+                    if(!player.isHit && rock.x+rock.radius>player.x && rock.x-rock.radius<player.x+player.width && rock.y+rock.radius>player.y && rock.y-rock.radius<player.y+player.height){player.isHit=true; gameState='gameOver';}
+                    if(!fire.isHit && gameState!=='gameOver' && rock.x+rock.radius>fire.x && rock.x-rock.radius<fire.x+fire.width && rock.y+rock.radius>fire.y && rock.y-rock.radius<fire.y+fire.height){fire.isHit=true; gameState='gameOver';}
+                    if(!baby.isHit && gameState!=='gameOver' && rock.x+rock.radius>baby.x && rock.x-rock.radius<baby.x+baby.width && rock.y+rock.radius>baby.y && rock.y-rock.radius<baby.y+baby.height){baby.isHit=true; gameState='gameOver';}
+                    if(!dog.isHit && gameState!=='gameOver' && rock.x+rock.radius>dog.x && rock.x-rock.radius<dog.x+dog.width && rock.y+rock.radius>dog.y && rock.y-rock.radius<dog.y+dog.height){dog.isHit=true; gameState='gameOver';}
+                }
+                if (gameState === 'gameOver') { continue; }
+
+                // Rock-club collision - EXTENDED HITBOX LOGIC
+                if (player.isSwinging && (rock.state==='falling'||rock.state==='bounced')) {
+                    let collisionDetected = false;
+                    // Calculate positions of club head and a midpoint
+                    let clubHeadX = player.clubPivotX + player.clubRadius * Math.cos(player.currentSwingAnimatedAngle);
+                    let clubHeadY = player.clubPivotY + player.clubRadius * Math.sin(player.currentSwingAnimatedAngle);
+                    let clubMidX = player.clubPivotX + (player.clubRadius / 2) * Math.cos(player.currentSwingAnimatedAngle);
+                    let clubMidY = player.clubPivotY + (player.clubRadius / 2) * Math.sin(player.currentSwingAnimatedAngle);
+                    
+                    // Calculate distances
+                    const distRockToClubHead = distance(rock.x, rock.y, clubHeadX, clubHeadY);
+                    const distRockToClubMid = distance(rock.x, rock.y, clubMidX, clubMidY);
+                    
+                    // Define the effective radius for collision check (rock radius + half club thickness)
+                    const collisionThreshold = rock.radius + player.clubThickness / 2; 
+                    
+                    // Check collision with head OR midpoint
+                    if (distRockToClubHead < collisionThreshold || distRockToClubMid < collisionThreshold) {
+                        collisionDetected = true;
+                    }
+                    
+                    if (collisionDetected) {
+                        rock.state='clubbed'; 
+                        rock.touchedByClub = true; 
+                        const hitAngle=Math.atan2(rock.y-player.clubPivotY,rock.x-player.clubPivotX); 
+                        const speed=6+Math.random(); 
+                        rock.dx=Math.cos(hitAngle)*speed; rock.dy=Math.sin(hitAngle)*speed; 
+                        if(Math.abs(rock.dy)<2)rock.dy=rock.dy<0?-2:2; 
+                    }
+                }
+            } 
+            // Chain reaction loop
+            for (let i = 0; i < rocks.length; i++) {
+                let rockA = rocks[i]; if (rockA.state === 'crumbling') continue; 
+                for (let j = i + 1; j < rocks.length; j++) { 
+                    let rockB = rocks[j]; if (rockB.state === 'crumbling') continue; 
+                    const distRocks = distance(rockA.x, rockA.y, rockB.x, rockB.y);
+                    const requiredDist = rockA.radius + rockB.radius + rockCollisionRadiusBuffer;
+                    if (distRocks < requiredDist) { if (rockA.touchedByClub || rockB.touchedByClub) { score += 100; updateScoreDisplay(); rockA.state = 'crumbling'; rockA.crumbleTimer = rockCrumbleDuration; rockB.state = 'crumbling'; rockB.crumbleTimer = rockCrumbleDuration; } }
+                }
+            }
+        } 
+
+        // --- DRAW FUNCTIONS --- 
+        function drawFloor() { ctx.fillStyle=wallFloorColor; ctx.fillRect(0,canvasHeight-floorVisualHeight,canvasWidth,floorVisualHeight); }
+        function drawWalls() { ctx.fillStyle=wallFloorColor; ctx.fillRect(0,0,wallVisualWidth,canvasHeight-floorVisualHeight); ctx.fillRect(canvasWidth-wallVisualWidth,0,wallVisualWidth,canvasHeight-floorVisualHeight); }
+        function drawCeiling() { ctx.fillStyle = wallFloorColor; ctx.fillRect(0, 0, skylightStartX, ceilingHeight); ctx.fillRect(skylightEndX, 0, canvasWidth - skylightEndX, ceilingHeight); }
+        function drawSkylightEffect() { ctx.beginPath(); ctx.moveTo(skylightStartX, ceilingHeight); ctx.lineTo(skylightEndX, ceilingHeight); const sF = canvasHeight*0.3; ctx.lineTo(skylightEndX+sF, canvasHeight-floorVisualHeight); ctx.lineTo(skylightStartX-sF, canvasHeight-floorVisualHeight); ctx.closePath(); ctx.fillStyle=skylightLightColor; ctx.fill(); }
+        function drawPlayer() { ctx.globalAlpha = 1.0; ctx.fillStyle = '#FFFFFF'; const cE = player.isHit ? player.deathEmoji : player.emoji; ctx.font = `${player.height*0.8}px sans-serif`; ctx.textAlign='center';ctx.textBaseline='middle'; ctx.fillText(cE, player.x+player.width/2, player.y+player.height/2); if(gameState==='playing'||(gameState==='gameOver'&&!player.isHit)){ctx.beginPath();ctx.strokeStyle='#D2B48C';ctx.lineWidth=player.clubThickness; let cEX=player.clubPivotX+player.clubRadius*Math.cos(player.currentSwingAnimatedAngle);let cEY=player.clubPivotY+player.clubRadius*Math.sin(player.currentSwingAnimatedAngle);ctx.moveTo(player.clubPivotX,player.clubPivotY);ctx.lineTo(cEX,cEY);ctx.stroke();ctx.lineWidth=1;}}
+        function drawFire() { ctx.globalAlpha = 1.0; ctx.fillStyle = '#FFFFFF'; const cE = fire.isHit ? fire.deathEmoji : fire.emoji; ctx.font=`${fire.height}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(cE, fire.x+fire.width/2, fire.y+fire.height/2);}
+        function drawBaby() { ctx.globalAlpha = 1.0; ctx.fillStyle = '#FFFFFF'; const cE=baby.isHit?baby.deathEmoji:baby.emoji; ctx.font=`${baby.height}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(cE,baby.x+baby.width/2,baby.y+baby.height/2);}
+        function drawDog() { ctx.globalAlpha = 1.0; ctx.fillStyle = '#FFFFFF'; const cE = dog.isHit ? dog.deathEmoji : dog.emoji; ctx.font=`${dog.height}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(cE, dog.x+dog.width/2, dog.y+dog.height/2); if (dog.state === 'barking' && dog.barkDurationTimer > 0 && !dog.isHit) { ctx.font = "12px 'Press Start 2P'"; ctx.fillStyle = "#FFFFFF"; ctx.fillText(dog.barkText, dog.x, dog.y - dog.height / 2 - 5);}}
+        function drawRocks() { rocks.forEach(r=>{ctx.globalAlpha = 1.0; ctx.fillStyle = '#FFFFFF'; ctx.textAlign='center';ctx.textBaseline='middle';if(r.touchedByClub&&r.state!=='crumbling'){ctx.beginPath();ctx.arc(r.x,r.y,r.radius+3,0,Math.PI*2);ctx.fillStyle=clubTouchedHaloColor;ctx.fill();ctx.fillStyle='#FFFFFF';} if(r.state==='crumbling'){const cP=r.crumbleTimer/rockCrumbleDuration;const s=r.radius*2*(1+(1-cP)*0.5);ctx.font=`${s}px sans-serif`;ctx.globalAlpha=Math.min(1,Math.max(0,cP*2-0.5));ctx.fillText(crumblingRockEmoji,r.x,r.y);ctx.globalAlpha=1.0;}else{ctx.font=`${r.radius*2}px sans-serif`;ctx.fillText(r.emoji,r.x,r.y);}}); }
+        function updateScoreDisplay() { scoreBoard.textContent = "Score: " + score; }
+        function showGameOverScreen() { saveHighScore(score); gameOverScreen.style.display = 'flex'; }
+
+        // --- GAME LOOP --- 
+        function gameLoop() { 
+            if(gameState==='playing'){
+                gameTimeInFrames++; updateRockSpawnInterval();
+                updatePlayer(); updateDog(); updateBaby(); 
+                updateParticles(); updateRainbow();   
+                rockSpawnTimer--;
+                if(rockSpawnTimer<=0){ spawnRock(); rockSpawnTimer=baseRockSpawnInterval; }
+                updateRocks();
+            } 
+            if(gameState!=='startScreen'){
+                ctx.clearRect(0,0,canvasWidth,canvasHeight);
+                drawSkylightEffect(); 
+                drawCeiling();drawWalls();drawFloor();
+                drawFire(); drawBaby(); drawDog();
+                drawRocks(); drawParticles(); drawRainbow();   
+                drawPlayer();
+            } 
+            if(gameState==='gameOver'){ showGameOverScreen(); cancelAnimationFrame(animationFrameId); return; } 
+            if(gameState==='playing'){ animationFrameId=requestAnimationFrame(gameLoop); }
+        }
+
+        // --- RESET AND START --- 
+        function resetGameValues() { 
+            score=0;updateScoreDisplay();rocks=[];rockIdCounter=0;
+            player.x=canvasWidth/2-player.width/2;player.y=canvasHeight-floorVisualHeight-player.height;
+            player.isSwinging=false;player.nextSwingDirection=1;player.currentSwingAnimatedAngle=0;
+            player.isHit=false;fire.isHit=false;fire.x=canvasWidth/2-fire.width/2;fire.y=canvasHeight-floorVisualHeight-fire.height;
+            baby.isHit=false;baby.x=fire.x-baby.width-5;baby.y=canvasHeight-floorVisualHeight-baby.height;
+            dog.isHit=false;dog.x=fire.x+fire.width+5;dog.y=canvasHeight-floorVisualHeight-dog.height;
+            dog.state='idle';dog.targetX=dog.x;dog.actionTimer=120;dog.barkDurationTimer=0;
+            gameTimeInFrames=0;baseRockSpawnInterval=120;rockSpawnTimer=baseRockSpawnInterval;keys={};
+            if(player.nextSwingDirection===1)player.currentSwingAnimatedAngle=0;
+            else player.currentSwingAnimatedAngle=-Math.PI;
+            particles = []; 
+            rainbow.isActive = false; rainbow.opacity = 0; 
+            debugFrameCount = 0; 
+        }
+        function resetGame() { resetGameValues(); gameOverScreen.style.display='none'; }
+        
+        ctx.textBaseline='middle'; ctx.textAlign='center';
+        function initialize() { 
+            if(gameState==='startScreen'){
+                startScreen.style.display='flex';gameContainer.style.display='none';
+                controlsInfo.style.display='none';displayHighScores();
+            }else{
+                startScreen.style.display='none';gameContainer.style.display='block';
+                controlsInfo.style.display='block';resetGame();gameLoop();
+            }
+        }
+        initialize();
+    </script>
+</body>
+</html>
