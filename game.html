@@ -167,13 +167,113 @@
             bandHeight: 5, yPosition: ceilingHeight + 5, 
         };
 
+        // Touch controls for mobile
+        let isTouchDragging = false;
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let playerStartX = 0;
+        let touchMoved = false;
+        const TAP_MAX_DIST = 15; // px
+        const TAP_MAX_TIME = 250; // ms
+        let touchStartTime = 0;
+
+        function isTouchOnPlayer(touchX, touchY) {
+            return (
+                touchX >= player.x &&
+                touchX <= player.x + player.width &&
+                touchY >= player.y &&
+                touchY <= player.y + player.height
+            );
+        }
+
+        canvas.addEventListener('touchstart', function(e) {
+            if (gameState !== 'playing') return;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            if (isTouchOnPlayer(x, y)) {
+                isTouchDragging = true;
+                touchStartX = x;
+                touchStartY = y;
+                playerStartX = player.x;
+                touchMoved = false;
+                touchStartTime = Date.now();
+            }
+        });
+
+        canvas.addEventListener('touchmove', function(e) {
+            if (!isTouchDragging || gameState !== 'playing') return;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const x = touch.clientX - rect.left;
+            // Only move horizontally
+            let dx = x - touchStartX;
+            if (Math.abs(dx) > 2) touchMoved = true;
+            let newX = playerStartX + dx;
+            newX = Math.max(wallVisualWidth, Math.min(newX, canvasWidth - wallVisualWidth - player.width));
+            player.x = newX;
+            e.preventDefault(); // Prevent scrolling
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', function(e) {
+            if (!isTouchDragging || gameState !== 'playing') return;
+            isTouchDragging = false;
+            const dt = Date.now() - touchStartTime;
+            const dist = Math.abs(player.x - playerStartX);
+            // If it was a tap (short time, little movement), swing
+            if (dt < TAP_MAX_TIME && dist < TAP_MAX_DIST && !player.isSwinging) {
+                player.isSwinging = true;
+                player.swingTimer = player.swingDuration;
+                if (player.nextSwingDirection === 1) {
+                    player.swingFromAngle = 0;
+                    player.swingToAngle = -Math.PI;
+                } else {
+                    player.swingFromAngle = -Math.PI;
+                    player.swingToAngle = 0;
+                }
+                player.currentSwingAnimatedAngle = player.swingFromAngle;
+                player.swingAnimationSpeed = (player.swingToAngle - player.swingFromAngle) / player.swingDuration;
+                player.nextSwingDirection *= -1;
+            }
+        });
+
         function getHighScores() { const scores = localStorage.getItem('cavemanHighScores'); return scores ? JSON.parse(scores) : []; }
         function saveHighScore(newScore) { let highScores = getHighScores(); highScores.push(newScore); highScores.sort((a, b) => b - a); highScores = highScores.slice(0, 5); localStorage.setItem('cavemanHighScores', JSON.stringify(highScores));}
         function displayHighScores() { const highScores = getHighScores(); highScoresList.innerHTML = ''; if (highScores.length === 0) { highScoresList.innerHTML = '<li>No scores yet!</li>'; } else { highScores.forEach((s, index) => { const li = document.createElement('li'); li.textContent = `${index + 1}. ${s}`; highScoresList.appendChild(li); }); } }
 
         startGameButton.addEventListener('click', () => { startScreen.style.display = 'none'; gameContainer.style.display = 'block'; controlsInfo.style.display = 'block'; gameState = 'playing'; resetGame(); gameLoop(); });
-        window.addEventListener('keydown', (e) => { keys[e.code] = true; if (gameState === 'playing' && e.code === 'Space' && !player.isSwinging) { player.isSwinging = true; player.swingTimer = player.swingDuration; if (player.nextSwingDirection === 1) { player.swingFromAngle=0; player.swingToAngle=-Math.PI; } else { player.swingFromAngle=-Math.PI; player.swingToAngle=0; } player.currentSwingAnimatedAngle = player.swingFromAngle; player.swingAnimationSpeed = (player.swingToAngle-player.swingFromAngle)/player.swingDuration; player.nextSwingDirection *= -1; } });
-        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+        canvas.addEventListener('mousedown', function(e) {
+            if (gameState !== 'playing') return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            // Left click (button 0): Move player
+            if (e.button === 0) {
+                // Center player under mouse, clamp to walls
+                let newX = mouseX - player.width / 2;
+                newX = Math.max(wallVisualWidth, Math.min(newX, canvasWidth - wallVisualWidth - player.width));
+                player.x = newX;
+            }
+            // Right click (button 2): Swing club
+            if (e.button === 2 && !player.isSwinging) {
+                player.isSwinging = true;
+                player.swingTimer = player.swingDuration;
+                if (player.nextSwingDirection === 1) {
+                    player.swingFromAngle = 0;
+                    player.swingToAngle = -Math.PI;
+                } else {
+                    player.swingFromAngle = -Math.PI;
+                    player.swingToAngle = 0;
+                }
+                player.currentSwingAnimatedAngle = player.swingFromAngle;
+                player.swingAnimationSpeed = (player.swingToAngle - player.swingFromAngle) / player.swingDuration;
+                player.nextSwingDirection *= -1;
+            }
+        });
+        // Prevent context menu on right click
+        canvas.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
         retryButton.addEventListener('click', () => { gameOverScreen.style.display = 'none'; gameContainer.style.display = 'none'; controlsInfo.style.display = 'none'; startScreen.style.display = 'flex'; gameState = 'startScreen'; displayHighScores(); });
 
         function distance(x1,y1,x2,y2){return Math.sqrt(Math.pow(x2-x1,2)+Math.pow(y2-y1,2));}
@@ -192,7 +292,23 @@
             const dx = (Math.random()-0.5)*2*maxRockSpawnAngleDx; const dy = initialRockFallSpeedY; 
             rockIdCounter++; rocks.push({ id:`R${rockIdCounter}`,x:x,y:y,radius:rockRadius,dx:dx,dy:dy,emoji:rockEmoji,state:'falling',touchedByClub:false,crumbleTimer:0,color:`rgb(${100+Math.random()*50},${100+Math.random()*50},${100+Math.random()*50})`});
         }
-        function updatePlayer() { if(keys['ArrowLeft']&&player.x>wallVisualWidth)player.x-=player.speed; if(keys['ArrowRight']&&player.x<canvasWidth-player.width-wallVisualWidth)player.x+=player.speed; player.clubPivotX=player.x+player.width/2;player.clubPivotY=player.y+player.height*0.3; if(player.isSwinging){player.swingTimer--;player.currentSwingAnimatedAngle+=player.swingAnimationSpeed; if(player.swingAnimationSpeed>0){if(player.currentSwingAnimatedAngle>player.swingToAngle)player.currentSwingAnimatedAngle=player.swingToAngle;}else if(player.swingAnimationSpeed<0){if(player.currentSwingAnimatedAngle<player.swingToAngle)player.currentSwingAnimatedAngle=player.swingToAngle;} if(player.swingTimer<=0)player.isSwinging=false;}else{if(player.nextSwingDirection===1)player.currentSwingAnimatedAngle=0;else player.currentSwingAnimatedAngle=-Math.PI;}}
+        function updatePlayer() {
+            player.clubPivotX = player.x + player.width / 2;
+            player.clubPivotY = player.y + player.height * 0.3;
+            if (player.isSwinging) {
+                player.swingTimer--;
+                player.currentSwingAnimatedAngle += player.swingAnimationSpeed;
+                if (player.swingAnimationSpeed > 0) {
+                    if (player.currentSwingAnimatedAngle > player.swingToAngle) player.currentSwingAnimatedAngle = player.swingToAngle;
+                } else if (player.swingAnimationSpeed < 0) {
+                    if (player.currentSwingAnimatedAngle < player.swingToAngle) player.currentSwingAnimatedAngle = player.swingToAngle;
+                }
+                if (player.swingTimer <= 0) player.isSwinging = false;
+            } else {
+                if (player.nextSwingDirection === 1) player.currentSwingAnimatedAngle = 0;
+                else player.currentSwingAnimatedAngle = -Math.PI;
+            }
+        }
         function updateDog() { if(dog.isHit)return;dog.actionTimer--; if(dog.state==='barking'){dog.barkDurationTimer--; if(dog.barkDurationTimer<=0){dog.state='idle';dog.actionTimer=60+Math.random()*120;}}else if(dog.actionTimer<=0){const rA=Math.random(); if(rA<0.7){dog.state='moving'; if(Math.random()<0.5){dog.targetX=wallVisualWidth+dog.width/2+5;}else{dog.targetX=canvasWidth-wallVisualWidth-dog.width/2-5;} dog.actionTimer=180+Math.random()*120;}else{dog.state='idle';dog.actionTimer=60+Math.random()*60; if(Math.abs(dog.x-(wallVisualWidth+dog.width/2+5))<dog.speed||Math.abs(dog.x-(canvasWidth-wallVisualWidth-dog.width/2-5))<dog.speed){dog.state='barking';dog.barkDurationTimer=30+Math.random()*30;}}} if(dog.state==='moving'){if(Math.abs(dog.x-dog.targetX)<dog.speed){dog.x=dog.targetX;dog.state='barking';dog.barkDurationTimer=30+Math.random()*30;dog.actionTimer=dog.barkDurationTimer+30;}else{if(dog.x<dog.targetX){dog.x+=dog.speed;}else{dog.x-=dog.speed;}}} dog.x=Math.max(wallVisualWidth+dog.width/2,Math.min(dog.x,canvasWidth-wallVisualWidth-dog.width/2));}
         function updateBaby() { if(baby.isHit||dog.isHit)return; if(Math.abs(baby.x-dog.x)>baby.width/2){if(baby.x<dog.x){baby.x+=baby.speed;}else{baby.x-=baby.speed;}} baby.x=Math.max(wallVisualWidth+baby.width/2,Math.min(baby.x,canvasWidth-wallVisualWidth-baby.width/2));}
         function updateRockSpawnInterval() { if(gameTimeInFrames>0&&gameTimeInFrames%60===0){baseRockSpawnInterval-=rockSpawnIntervalDecreaseRate*20; if(baseRockSpawnInterval<minRockSpawnInterval){baseRockSpawnInterval=minRockSpawnInterval;}}}
