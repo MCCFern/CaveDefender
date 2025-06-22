@@ -83,7 +83,7 @@
         <canvas id="gameCanvas"></canvas>
         <div id="gameOverScreen"><h2>GAME OVER</h2><button id="retryButton">Retry</button></div>
     </div>
-    <div id="controlsInfo" style="display: none;">Controls: Left/Right Arrows to Move, Space to Swing Club</div>
+    <div id="controlsInfo" style="display: none;">Controls: Left Click to Move, Right Click to Swing. On mobile: Drag caveman to move, Tap caveman to swing.</div>
 
     <script>
         const canvas = document.getElementById('gameCanvas');
@@ -167,23 +167,24 @@
             bandHeight: 5, yPosition: ceilingHeight + 5, 
         };
 
-        // Touch controls for mobile
-        let isTouchDragging = false;
-        let touchStartX = 0;
-        let touchStartY = 0;
-        let playerStartX = 0;
-        let touchMoved = false;
+        // Simplified Touch controls for mobile: tap on player = swing, tap elsewhere = move
         const TAP_MAX_DIST = 15; // px
         const TAP_MAX_TIME = 250; // ms
         let touchStartTime = 0;
+        let touchStartedOnPlayer = false;
+        let touchStartX = 0;
+        let touchStartY = 0;
 
+        // Use a circular hitbox for the player sprite for tap/click detection
         function isTouchOnPlayer(touchX, touchY) {
-            return (
-                touchX >= player.x &&
-                touchX <= player.x + player.width &&
-                touchY >= player.y &&
-                touchY <= player.y + player.height
-            );
+            // Center of the player
+            const centerX = player.x + player.width / 2;
+            const centerY = player.y + player.height / 2;
+            // Use a radius that covers the emoji well (tweak as needed)
+            const hitRadius = Math.max(player.width, player.height) * 0.6;
+            const dx = touchX - centerX;
+            const dy = touchY - centerY;
+            return (dx * dx + dy * dy) <= (hitRadius * hitRadius);
         }
 
         canvas.addEventListener('touchstart', function(e) {
@@ -192,50 +193,43 @@
             const touch = e.touches[0];
             const x = touch.clientX - rect.left;
             const y = touch.clientY - rect.top;
-            if (isTouchOnPlayer(x, y)) {
-                isTouchDragging = true;
-                touchStartX = x;
-                touchStartY = y;
-                playerStartX = player.x;
-                touchMoved = false;
-                touchStartTime = Date.now();
-            }
+            touchStartX = x;
+            touchStartY = y;
+            touchStartedOnPlayer = isTouchOnPlayer(x, y);
+            touchStartTime = Date.now();
         });
 
-        canvas.addEventListener('touchmove', function(e) {
-            if (!isTouchDragging || gameState !== 'playing') return;
-            const rect = canvas.getBoundingClientRect();
-            const touch = e.touches[0];
-            const x = touch.clientX - rect.left;
-            // Only move horizontally
-            let dx = x - touchStartX;
-            if (Math.abs(dx) > 2) touchMoved = true;
-            let newX = playerStartX + dx;
-            newX = Math.max(wallVisualWidth, Math.min(newX, canvasWidth - wallVisualWidth - player.width));
-            player.x = newX;
-            e.preventDefault(); // Prevent scrolling
-        }, { passive: false });
-
         canvas.addEventListener('touchend', function(e) {
-            if (!isTouchDragging || gameState !== 'playing') return;
-            isTouchDragging = false;
+            if (gameState !== 'playing') return;
             const dt = Date.now() - touchStartTime;
-            const dist = Math.abs(player.x - playerStartX);
-            // If it was a tap (short time, little movement), swing
-            if (dt < TAP_MAX_TIME && dist < TAP_MAX_DIST && !player.isSwinging) {
-                player.isSwinging = true;
-                player.swingTimer = player.swingDuration;
-                if (player.nextSwingDirection === 1) {
-                    player.swingFromAngle = 0;
-                    player.swingToAngle = -Math.PI;
-                } else {
-                    player.swingFromAngle = -Math.PI;
-                    player.swingToAngle = 0;
+            const rect = canvas.getBoundingClientRect();
+            const touch = (e.changedTouches && e.changedTouches[0]) || { clientX: touchStartX, clientY: touchStartY };
+            const x = touch.clientX - rect.left;
+            const y = touch.clientY - rect.top;
+            const dist = Math.abs(x - touchStartX) + Math.abs(y - touchStartY);
+            if (dt < TAP_MAX_TIME && dist < TAP_MAX_DIST) {
+                if (touchStartedOnPlayer && !player.isSwinging) {
+                    // Tap on player: swing
+                    player.isSwinging = true;
+                    player.swingTimer = player.swingDuration;
+                    if (player.nextSwingDirection === 1) {
+                        player.swingFromAngle = 0;
+                        player.swingToAngle = -Math.PI;
+                    } else {
+                        player.swingFromAngle = -Math.PI;
+                        player.swingToAngle = 0;
+                    }
+                    player.currentSwingAnimatedAngle = player.swingFromAngle;
+                    player.swingAnimationSpeed = (player.swingToAngle - player.swingFromAngle) / player.swingDuration;
+                    player.nextSwingDirection *= -1;
+                } else if (!touchStartedOnPlayer) {
+                    // Tap elsewhere: move player
+                    let newX = x - player.width / 2;
+                    newX = Math.max(wallVisualWidth, Math.min(newX, canvasWidth - wallVisualWidth - player.width));
+                    player.x = newX;
                 }
-                player.currentSwingAnimatedAngle = player.swingFromAngle;
-                player.swingAnimationSpeed = (player.swingToAngle - player.swingFromAngle) / player.swingDuration;
-                player.nextSwingDirection *= -1;
             }
+            touchStartedOnPlayer = false;
         });
 
         function getHighScores() { const scores = localStorage.getItem('cavemanHighScores'); return scores ? JSON.parse(scores) : []; }
